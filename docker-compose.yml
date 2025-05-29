@@ -1,0 +1,211 @@
+services:
+  cjis_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cjis_rag_api_service
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      - ./api:/app/api
+      - ./data/chat_sessions:/app/data/chat_sessions
+      - ./data:/app/data
+      - ./logs:/app/container_logs
+      - ./cjis-policy-bot-8965a1c69e2e.json:/app/credentials.json:ro
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - PYTHONUNBUFFERED=1
+    ports:
+      
+       - "8000:8000" 
+    networks:
+      - cjis_network
+ 
+
+  nginx:
+    image: nginx:stable
+    container_name: nginx_reverse_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./letsencrypt:/etc/letsencrypt:ro # Keep :ro if Nginx only reads
+      - ./nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - cjis_api
+    networks:
+      - cjis_network
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot_service
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # These are passed to the container's environment
+      - CERTBOT_DOMAIN=cjis.backend.api.bytecafeanalytics.com
+      - CERTBOT_EMAIL=rishijarral@gmail.com
+      - STAGING=true
+    networks:
+      - cjis_network
+    entrypoint: |
+      sh -c '
+        set -e
+        echo "INFO: Certbot entrypoint script started."
+        # Access container environment variables using $$VARNAME (shell sees $VARNAME)
+        echo "INFO: Raw values from container env: DOMAIN=[$$CERTBOT_DOMAIN], EMAIL=[$$CERTBOT_EMAIL], STAGING=[$$STAGING]"
+
+        STAGING_ARG="" # Script-local variable
+        # $$STAGING refers to the container environment variable STAGING
+        if [ "$$STAGING" = "true" ] || [ "$$STAGING" = "1" ]; then
+          STAGING_ARG="--staging" # Script-local variable
+          echo "INFO: Using Let'"'"'s Encrypt staging server: $$STAGING_ARG" # Expand script-local $$STAGING_ARG
+        else
+          echo "INFO: Using Let'"'"'s Encrypt production server."
+        fi
+
+        LETSENCRYPT_DIR="/etc/letsencrypt" # Script-local variable
+        # $$LETSENCRYPT_DIR for script-local, $$CERTBOT_DOMAIN for container env
+        LIVE_CERT_DIR="$$LETSENCRYPT_DIR/live/$$CERTBOT_DOMAIN"
+        WEBROOT_PATH="/var/www/certbot" # Script-local variable
+        RSA_KEY_SIZE=4096 # Script-local variable
+
+        create_options_ssl() {
+          # $$LETSENCRYPT_DIR is script-local
+          local options_ssl_file="$$LETSENCRYPT_DIR/options-ssl-nginx.conf"
+          if [ ! -f "$$options_ssl_file" ]; then # Expand script-local $$options_ssl_file
+            echo "INFO: Creating $$options_ssl_file..." # Expand script-local $$options_ssl_file
+            if command -v curl >/dev/null 2>&1; then
+              curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf -o "$$options_ssl_file" # Expand script-local $$options_ssl_file
+            else
+              echo "WARNING: curl not found. Creating basic options-ssl-nginx.conf."
+              echo "ssl_protocols TLSv1.2 TLSv1.3;" > "$$options_ssl_file" # Expand script-local $$options_ssl_file
+              echo "ssl_prefer_server_ciphers on;" >> "$$options_ssl_file"
+              echo "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;" >> "$$options_ssl_file"
+            fi
+            echo "INFO: Generated $$options_ssl_file." # Expand script-local $$options_ssl_file
+          else
+            echo "INFO: $$options_ssl_file already exists." # Expand script-local $$options_ssl_file
+          fi
+        }
+
+        create_dhparams() {
+          # $$LETSENCRYPT_DIR, $$RSA_KEY_SIZE are script-local
+          local dhparams_file="$$LETSENCRYPT_DIR/ssl-dhparams.pem"
+          if [ ! -f "$$dhparams_file" ]; then # Expand script-local $$dhparams_file
+            echo "INFO: Creating $$dhparams_file ($$RSA_KEY_SIZE bits)... This may take a while." # Expand script-local $$dhparams_file, $$RSA_KEY_SIZE
+            openssl dhparam -out "$$dhparams_file" $$RSA_KEY_SIZE # Expand script-local $$dhparams_file, $$RSA_KEY_SIZE
+            echo "INFO: Generated $$dhparams_file." # Expand script-local $$dhparams_file
+          else
+            echo "INFO: $$dhparams_file already exists." # Expand script-local $$dhparams_file
+          fi
+        }
+
+        create_dummy_certs_if_needed() {
+          # $$LIVE_CERT_DIR is script-local, incorporates $$CERTBOT_DOMAIN (container env)
+          if [ ! -f "$$LIVE_CERT_DIR/fullchain.pem" ] || [ ! -f "$$LIVE_CERT_DIR/privkey.pem" ]; then # Expand script-local $$LIVE_CERT_DIR
+            echo "INFO: Real certificates not found for $$CERTBOT_DOMAIN. Creating self-signed dummy certificates..." # Expand container env $$CERTBOT_DOMAIN
+            mkdir -p "$$LIVE_CERT_DIR" # Expand script-local $$LIVE_CERT_DIR
+            openssl req -x509 -nodes -newkey rsa:$$RSA_KEY_SIZE -days 30 \ # Expand script-local $$RSA_KEY_SIZE
+              -keyout "$$LIVE_CERT_DIR/privkey.pem" \ # Expand script-local $$LIVE_CERT_DIR
+              -out "$$LIVE_CERT_DIR/fullchain.pem" \ # Expand script-local $$LIVE_CERT_DIR
+              -subj "/CN=localhost"
+            echo "INFO: Created dummy self-signed certificates. Nginx can use these to start."
+            touch "$$LIVE_CERT_DIR/IS_DUMMY_CERT" # Expand script-local $$LIVE_CERT_DIR
+          else
+            echo "INFO: Existing certificates found in $$LIVE_CERT_DIR for $$CERTBOT_DOMAIN." # Expand script-local $$LIVE_CERT_DIR, container env $$CERTBOT_DOMAIN
+            rm -f "$$LIVE_CERT_DIR/IS_DUMMY_CERT" # Expand script-local $$LIVE_CERT_DIR
+          fi
+        }
+
+        obtain_or_renew_certificate() {
+          echo "INFO: Attempting to obtain or renew Let'"'"'s Encrypt certificate for $$CERTBOT_DOMAIN..." # Expand container env $$CERTBOT_DOMAIN
+          # $$WEBROOT_PATH script-local, $$CERTBOT_EMAIL & $$CERTBOT_DOMAIN container env
+          # $${STAGING_ARG:-production} for shell parameter expansion of script-local STAGING_ARG
+          echo "INFO: Using webroot: $$WEBROOT_PATH, Email: $$CERTBOT_EMAIL, Domain: $$CERTBOT_DOMAIN, Staging: $${STAGING_ARG:-production}"
+
+          # $$WEBROOT_PATH, $$RSA_KEY_SIZE, $$STAGING_ARG are script-local.
+          # $$CERTBOT_EMAIL, $$CERTBOT_DOMAIN are container env vars.
+          local certbot_cmd_args="certonly --webroot \
+            --webroot-path=$$WEBROOT_PATH \
+            --email $$CERTBOT_EMAIL \
+            --agree-tos \
+            --no-eff-email \
+            --non-interactive \
+            -d $$CERTBOT_DOMAIN \
+            --rsa-key-size $$RSA_KEY_SIZE \
+            $$STAGING_ARG"
+
+          if [ -f "$$LIVE_CERT_DIR/IS_DUMMY_CERT" ]; then # Expand script-local $$LIVE_CERT_DIR
+             echo "INFO: Dummy certificates detected. Forcing renewal to replace them."
+             # Append to script-local certbot_cmd_args, so expand it with $$certbot_cmd_args
+             certbot_cmd_args="$$certbot_cmd_args --force-renewal"
+          else
+             certbot_cmd_args="$$certbot_cmd_args --keep-until-expiring"
+          fi
+
+          echo "INFO: Running Certbot with command: certbot $$certbot_cmd_args" # Expand script-local $$certbot_cmd_args
+          eval certbot $$certbot_cmd_args # Expand script-local $$certbot_cmd_args
+          local certbot_exit_code=$$? # Special shell variable $?, use $$? to pass $? to shell.
+
+          if [ $$certbot_exit_code -eq 0 ]; then # Expand script-local $$certbot_exit_code
+            echo "INFO: Certbot command successful."
+            rm -f "$$LIVE_CERT_DIR/IS_DUMMY_CERT" # Expand script-local $$LIVE_CERT_DIR
+            echo "INFO: Reloading Nginx to apply new/renewed certificates..."
+            if command -v docker >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then
+              if docker kill --signal=SIGHUP nginx_reverse_proxy; then
+                echo "INFO: Sent SIGHUP to Nginx (nginx_reverse_proxy) successfully."
+              else
+                echo "ERROR: Failed to send SIGHUP to Nginx (nginx_reverse_proxy). Nginx might not have reloaded."
+              fi
+            else
+              echo "WARNING: Docker CLI not found/socket not accessible. Cannot auto-reload Nginx."
+            fi
+          else
+            echo "ERROR: Certbot command failed with exit code $$certbot_exit_code. Check Certbot logs above." # Expand script-local $$certbot_exit_code
+            echo "ERROR: Nginx might be using dummy or outdated certificates."
+            return 1
+          fi
+          return 0
+        }
+
+        create_options_ssl
+        create_dhparams
+        create_dummy_certs_if_needed
+        echo "INFO: Pausing for 10 seconds to allow Nginx to initialize..."
+        sleep 10
+        obtain_or_renew_certificate || echo "WARNING: Initial certificate obtaining/renewal failed. Will retry in renewal loop."
+        echo "INFO: Initial certificate setup process finished."
+        echo "INFO: Starting Certbot periodic renewal checks (every 12 hours)..."
+        trap exit TERM QUIT INT;
+        while true; do
+          # $$(date) for command substitution, $$WEBROOT_PATH for script-local var
+          echo "INFO: $$(date) - Performing scheduled certificate renewal check."
+          certbot renew --webroot -w $$WEBROOT_PATH --quiet \
+            --post-hook " \
+              echo ''INFO: $$(date) - Certbot renewal post-hook: Attempting to reload Nginx...''; \
+              if command -v docker >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then \
+                if docker kill --signal=SIGHUP nginx_reverse_proxy; then \
+                  echo ''INFO: $$(date) - renewal post-hook: Sent SIGHUP to Nginx successfully.''; \
+                else \
+                  echo ''ERROR: $$(date) - renewal post-hook: Failed to send SIGHUP to Nginx.''; \
+                fi; \
+              else \
+                echo ''WARNING: $$(date) - renewal post-hook: Docker CLI/socket not available for Nginx reload.''; \
+              fi; \
+            "
+          sleep 12h &
+          _LAST_BG_PID=$$! # Assign last background PID to a script-local var
+          wait $$_LAST_BG_PID; # Wait for that specific PID
+        done
+      '
+networks:
+  cjis_network:
+    driver: bridge
+    name: cjis_services_network

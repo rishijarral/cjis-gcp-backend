@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.env
+
+# Service Account Keys and Credentials
+*.json
+!Readme.md  # Prevent accidental ignore of Readme
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# Logs
+logs/
+*.log
+
+# Let’s Encrypt and SSL
+letsencrypt/
+*.pem
+
+# DuckDNS or certbot scripts
+duckdns/
+
+# Data files (PDFs, chat sessions)
+data/chat_sessions/
+
+
+# VS Code settings
+.vscode/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Nginx temp files
+nginx/certbot/www/
+

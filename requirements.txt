@@ -1,0 +1,12 @@
+scikit-learn
+pyjwt[crypto]
+httpx
+numpy
+# google-genai
+google-cloud-aiplatform>=1.92
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+
+

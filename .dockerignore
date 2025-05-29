@@ -1,0 +1,56 @@
+# Ignore all files by default
+*
+
+# --- Allow files and directories essential for the Docker build ---
+!Dockerfile
+!docker-compose.yml # Though docker-compose.yml isn't strictly needed by the daemon, it's common to not ignore it
+!requirements.txt
+!entrypoint.sh
+
+# Allow application code and necessary data for the build stage (if any)
+!api/
+# !data/output_jsonl/ # Only if this is truly needed IN THE IMAGE during build. Usually data is mounted.
+
+# --- Allow other scripts if they are part of the build context (e.g., copied into image) ---
+# !parsing_script.py # Only if copied into the image via Dockerfile
+# !generate_project_overview.sh
+# !run_local.sh
+# !run_main.sh
+
+# --- Files that should explicitly NOT be in the build context or image ---
+# .env # Secrets/config should be injected, not copied. If you DO need it, uncomment one !.env above.
+
+# --- Common Python and OS cruft ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log # Catches all .log files
+*.sqlite3
+*.db
+*.DS_Store
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+.cache/
+.tox/
+.nosetests.xml
+coverage.xml
+*.cover
+.venv/
+venv/
+*.bak
+*.swp
+
+# --- SCM directories ---
+.git/
+.hg/
+.svn/
+
+# --- IDE/Editor specific ---
+.vscode/
+.idea/
