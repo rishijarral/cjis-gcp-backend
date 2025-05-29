@@ -133,14 +133,15 @@ INTERACTION_LOG_PATH=/app/logs/interactions.log # Path inside the container for 
 DOMAIN_NAME=your.cjis.backend.api.bytecafeanalytics.com # Your domain
 LETSENCRYPT_EMAIL=your-email@example.com
 DUCKDNS_TOKEN=your-duckdns-token # If using DuckDNS
+```
 
-Important:
+## Important:
 
     Ensure the GOOGLE_APPLICATION_CREDENTIALS file (e.g., cjis-policy-bot-8965a1c69e2e.json) is present in the project root and its name matches the one in your .env file (or docker-compose.yml).
     Update paths and IDs for RAG_CORPUS_NAME.
 
-Setup and Running
-Using Docker Compose (Recommended)
+## Setup and Running
+### Using Docker Compose 
 
 This is the preferred method as it handles the API service, Nginx, and Certbot for SSL.
 
@@ -162,7 +163,7 @@ This is the preferred method as it handles the API service, Nginx, and Certbot f
 
     You might need to run an initial certonly command if there are issues, or adjust Nginx to temporarily serve HTTP for the challenge. Often, Certbot in docker-compose is paired with an entrypoint script that handles this.
 
-Manual Setup (Alternative)
+### Manual Setup (Alternative)
 
 This is more complex and involves running the FastAPI application directly.
 
