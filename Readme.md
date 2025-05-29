@@ -1,103 +1,56 @@
+# CJIS Backend API Server
 
+This project hosts the backend infrastructure for the CJIS (Criminal Justice Information Services) API service. It is containerized using Docker and served via Nginx as a reverse proxy, with HTTPS support enabled through Let's Encrypt.
 
-# CJIS Policy Parser and RAG Backend
+---
 
-This backend extracts structured data from the official CJIS policy PDF and prepares it for two tasks:
+##  Server Architecture Overview
 
-- Fine-tuning Gemini models
-- Retrieval-Augmented Generation (RAG) with FAISS
+The server stack includes:
 
-Optimized for GPU acceleration and cloud portability, it runs locally or on GCP VMs.
+- **Nginx**: Acts as a reverse proxy to route incoming HTTPS requests to the backend API service.
+- **Flask API (Python)**: The core application, located in `api/main.py`, serves REST endpoints.
+- **Certbot (Let's Encrypt)**: Automatically manages and renews TLS/SSL certificates for secure HTTPS.
+- **DuckDNS**: Used for dynamic DNS updates (useful for hosting on a dynamic IP).
 
-## Project Structure
+---
 
-```
-.
-├── Dockerfile               # CUDA-enabled image with FAISS GPU support
-├── docker-compose.yml       # Defines parser and vector DB services
-├── parsing_script.py        # Parses PDF and generates JSONL output
-├── setup_vector_db.py       # Builds FAISS vector index
-├── requirements.txt         # Python dependencies
-├── data/
-│   ├── pdf/                 # CJIS.pdf goes here
-│   └── output_jsonl/        # Fine-tuning and RAG JSONL outputs
-├── my_vector_store/         # FAISS index and metadata
-└── backup.txt               # Optional scratch or notes
-```
+##  How Requests Flow
 
-## Prerequisites
+1. **Client** sends an HTTPS request to `https://cjis.backend.api.bytecafeanalytics.com`.
+2. **Nginx** receives the request and terminates SSL using Let's Encrypt certificates.
+3. **Nginx** forwards the request to the backend container running the Flask app on an internal port (e.g., `http://api:5000`).
+4. **The Flask API** handles the request and sends a response back through Nginx to the client.
 
-- Docker
-- NVIDIA GPU and drivers
-- NVIDIA Container Toolkit
-- (Optional) Google Cloud CLI for Vertex AI
+---
 
-## Setup
+## Key Files & Directories
 
-Build the Docker image:
+| Path                       | Purpose                                            |
+|----------------------------|----------------------------------------------------|
+| `nginx/conf.d/default.conf`| Nginx site config for reverse proxy + SSL          |
+| `letsencrypt/`             | Stores certificates and renewal configs            |
+| `duckdns/duck.sh`          | Script for updating DuckDNS IP dynamically         |
+| `docker-compose.yml`       | Orchestrates all containers                        |
+| `entrypoint.sh`            | Custom init script for container setup             |
+| `api/main.py`              | Flask application entry point                      |
 
-```bash
-docker compose build --no-cache
-```
+---
 
-## Step 1: Generate JSONL
+## Security & Best Practices
 
-Parse the input PDF:
+- TLS certificates are auto-managed by Certbot and renewed via cron.
+- Nginx is configured to enforce HTTPS using strong cipher suites and Diffie-Hellman parameters.
+- Backend services are only accessible internally and not exposed to the public internet.
+- Secrets (like service account JSON) are excluded via `.gitignore`.
 
-```bash
-docker compose up pdf-parser
-```
+---
 
-Produces:
+##  Deployment
 
-- `data/output_jsonl/cjis_finetune_dataset.jsonl`
-- `data/output_jsonl/cjis_rag_data.jsonl`
-
-## Step 2: Create Vector Database
-
-Build the FAISS index:
+To deploy locally or on a VM:
 
 ```bash
-docker compose run vector-db
-```
-
-Produces:
-
-- `my_vector_store/cjis.index`
-- `my_vector_store/cjis_docs.pkl`
-
-## Environment Variables
-
-Override file paths via environment variables:
-
-```bash
-INPUT_PDF_PATH=./data/pdf/CJIS.pdf
-FT_JSONL_PATH=./data/output_jsonl/cjis_finetune_dataset.jsonl
-RAG_JSONL_PATH=./data/output_jsonl/cjis_rag_data.jsonl
-FAISS_INDEX_PATH=./my_vector_store/cjis.index
-METADATA_PATH=./my_vector_store/cjis_docs.pkl
-```
-
-## Deployment on GCP VM
-
-- Clone the project to your VM
-- Ensure Docker and NVIDIA runtime are installed
-- Run using the same `docker compose` commands
-- Use mounted persistent disks or buckets for data durability
-
-
-## Next Steps
-
-- Upload the fine-tuning JSONL to Google Cloud Storage
-- Fine-tune a Gemini model using Vertex AI
-- Use the FAISS index and Gemini in a custom inference pipeline
-
-## Script Overview
-
-### **parsing_script.py**
-
-Reads the PDF, removes headers and footers, matches section headings, and accumulates section content. Cleans and normalizes text, splits content into fine-tuning and RAG chunks, applies prompt and completion templates, and writes JSONL outputs. Optionally generates embeddings for RAG chunks.
-
-### **setup_vector_db.py**
-
-Reads the RAG JSONL, loads or generates embeddings using a SentenceTransformer (utilizing GPU if available), collects embeddings and metadata, builds a FAISS index, and saves both the index and metadata as a pickle file for fast retrieval.
+git clone git@github.com:rishijarral/cjis-gcp-backend.git
+cd cjis-gcp-backend
+docker-compose up --build -d

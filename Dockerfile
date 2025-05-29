@@ -49,6 +49,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 RUN mkdir -p /app/data/chat_sessions && chown -R appuser:appgroup /app/data
+RUN mkdir -p /app/logs/container_logs && chown -R appuser:appgroup /app/logs
+
+
 
 COPY ./api ./api
 COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
