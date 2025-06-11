@@ -130,7 +130,7 @@ RATE_LIMIT_WINDOW=60
 INTERACTION_LOG_PATH=/app/logs/interactions.log # Path inside the container for interaction logs
 
 # Nginx and Let's Encrypt (used by docker-compose.yml and Nginx configs)
-DOMAIN_NAME=your.cjis.backend.api.bytecafeanalytics.com # Your domain
+DOMAIN_NAME=cjis.backend.api.bytecafeanalytics.com # Your domain
 LETSENCRYPT_EMAIL=your-email@example.com
 DUCKDNS_TOKEN=your-duckdns-token # If using DuckDNS
 ```

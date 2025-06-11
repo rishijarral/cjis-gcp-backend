@@ -21,7 +21,29 @@ services:
        - "8000:8000" 
     networks:
       - cjis_network
- 
+  # cjis_api_v2:
+  #     build:
+  #       context: .
+  #       dockerfile: Dockerfile
+  #     container_name: cjis_rag_api_service_v2
+  #     restart: unless-stopped
+  #     env_file:
+  #       - ./.env
+  #     volumes:
+  #       - ./api:/app/api
+  #       - ./data/chat_sessions:/app/data/chat_sessions
+  #       - ./data:/app/data
+  #       - ./logs:/app/container_logs
+  #       - ./cjis-policy-bot-8965a1c69e2e.json:/app/credentials.json:ro
+  #     environment:
+  #       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+  #       - PYTHONUNBUFFERED=1
+  #     ports:
+  #       - "8001:8000"  
+  #     networks:
+  #       - cjis_network
+
+
 
   nginx:
     image: nginx:stable
