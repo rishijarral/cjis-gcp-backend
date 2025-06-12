@@ -76,7 +76,10 @@ VERTEX_GEMINI_MODEL_NAME = os.getenv("VERTEX_GEMINI_MODEL_NAME", "gemini-2.0-fla
 RAG_CORPUS_NAME = os.getenv("RAG_CORPUS_NAME")
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "3"))
 
-LLM_SYSTEM_INSTRUCTION = os.getenv("RAG_FT_SYSTEM_INSTRUCTION_FOR_API", "").strip()
+# LLM_SYSTEM_INSTRUCTION = os.getenv("RAG_FT_SYSTEM_INSTRUCTION_FOR_API", "").strip() # Removed: Will be loaded from JSON
+SYSTEM_INSTRUCTION_JSON_PATH = os.getenv("SYSTEM_INSTRUCTION_JSON_PATH", "data/config/instructions.json")
+LLM_SYSTEM_INSTRUCTION_FROM_JSON: Optional[str] = None # Will hold instruction from JSON
+
 GEMINI_SAFETY_SETTINGS_THRESHOLD = os.getenv("GEMINI_SAFETY_SETTINGS_THRESHOLD", "BLOCK_MEDIUM_AND_ABOVE")
 GENERATIVE_MODEL_API_TIMEOUT_SECONDS = int(os.getenv("GENERATIVE_MODEL_API_TIMEOUT_SECONDS", "90"))
 STREAMING_RESPONSE_TIMEOUT_SECONDS = int(os.getenv("STREAMING_RESPONSE_TIMEOUT_SECONDS", "500"))
@@ -306,14 +309,53 @@ CHAT_SESSIONS_DIR = pathlib.Path(os.getenv("CHAT_SESSIONS_BASE_PATH", "/app/data
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    global gcp_project_configured, vertex_ai_client_wrapper_instance, vertex_ai_configured_successfully, llm_model_operational, _supabase_jwk_client, rag_retrieval_tool_global
+    global gcp_project_configured, vertex_ai_client_wrapper_instance, vertex_ai_configured_successfully
+    global llm_model_operational, _supabase_jwk_client, rag_retrieval_tool_global
+    global LLM_SYSTEM_INSTRUCTION_FROM_JSON, SYSTEM_INSTRUCTION_JSON_PATH
+
     try: CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True); app_logger.info(f"Chat sessions directory ensured at: {CHAT_SESSIONS_DIR}")
     except OSError as e: app_logger.error(f"Could not create chat sessions directory {CHAT_SESSIONS_DIR}: {e}", exc_info=DEBUG_MODE)
+
+    # Load system instruction from JSON
+    try:
+        instruction_file_path = pathlib.Path(SYSTEM_INSTRUCTION_JSON_PATH)
+        instruction_file_full_path = instruction_file_path.resolve() # Get absolute path for logging
+        app_logger.info(f"Attempting to load system instruction from: {instruction_file_full_path}")
+
+        if instruction_file_path.is_file():
+            # Ensure parent directory exists for the config file if a relative path like 'config/...' is used
+            # and the script is run from a different working directory.
+            # However, for reading, generally, this is not needed, but helpful if we were to write.
+            # For now, simply check if the path is absolute or relative to CWD.
+            app_logger.info(f"Found instruction file at: {instruction_file_full_path}")
+            with open(instruction_file_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+                LLM_SYSTEM_INSTRUCTION_FROM_JSON = config_data.get("system_instruction", "").strip()
+                if LLM_SYSTEM_INSTRUCTION_FROM_JSON:
+                    app_logger.info(f"Successfully loaded system instruction from JSON: {SYSTEM_INSTRUCTION_JSON_PATH}")
+                    app_logger.debug(f"System instruction content: '{LLM_SYSTEM_INSTRUCTION_FROM_JSON[:100]}...'")
+                else:
+                    app_logger.warning(f"System instruction key 'system_instruction' not found or empty in JSON: {SYSTEM_INSTRUCTION_JSON_PATH}. No system instruction from JSON will be used.")
+                    LLM_SYSTEM_INSTRUCTION_FROM_JSON = "" # Ensure it's an empty string
+        else:
+            app_logger.warning(f"System instruction JSON file not found at: {instruction_file_full_path} (relative path from CWD: {SYSTEM_INSTRUCTION_JSON_PATH}). No system instruction from JSON will be used.")
+            LLM_SYSTEM_INSTRUCTION_FROM_JSON = "" # Explicitly set to empty if file not found
+    except json.JSONDecodeError as e:
+        resolved_path_for_error = pathlib.Path(SYSTEM_INSTRUCTION_JSON_PATH).resolve()
+        app_logger.error(f"Error decoding system instruction JSON file {resolved_path_for_error}: {e}", exc_info=DEBUG_MODE)
+        LLM_SYSTEM_INSTRUCTION_FROM_JSON = "" # Explicitly set to empty on error
+    except Exception as e:
+        resolved_path_for_error = pathlib.Path(SYSTEM_INSTRUCTION_JSON_PATH).resolve()
+        app_logger.error(f"An unexpected error occurred while loading system instruction from JSON {resolved_path_for_error}: {e}", exc_info=DEBUG_MODE)
+        LLM_SYSTEM_INSTRUCTION_FROM_JSON = "" # Explicitly set to empty on error
+
+
     gcp_project_configured = VERTEX_PROJECT_ID_ENV
     if not gcp_project_configured:
         try: from google.auth import default as google_auth_default; _, gcp_project_configured = google_auth_default(scopes=['https://www.googleapis.com/auth/cloud-platform']); app_logger.info(f"GCP Project ID determined via default credentials: {gcp_project_configured}" if gcp_project_configured else "GCP Project ID not found by default creds.")
         except Exception as e: app_logger.warning(f"Could not determine GCP Project ID via default credentials: {e}")
     if not gcp_project_configured: app_logger.error("CRITICAL: GCP Project ID could not be determined.")
+
     if VERTEX_AI_SDK_AVAILABLE and gcp_project_configured and VERTEX_LOCATION:
         try:
             vertex_ai_client_wrapper_instance = VertexAIClientWrapper(project=gcp_project_configured, location=VERTEX_LOCATION)
@@ -326,11 +368,13 @@ async def lifespan(app_instance: FastAPI):
         missing = [item for item, cond in [("Vertex AI SDK", VERTEX_AI_SDK_AVAILABLE), ("GCP Project ID", gcp_project_configured), ("Vertex Location", VERTEX_LOCATION)] if not cond]
         app_logger.warning(f"Vertex AI features disabled. Missing: {', '.join(missing) if missing else 'configuration details'}.")
         vertex_ai_configured_successfully = False; llm_model_operational = False
+
     if SUPABASE_URL:
         try: jwks_uri = SUPABASE_URL.rstrip('/') + "/auth/v1/.well-known/jwks.json"; _supabase_jwk_client = PyJWKClient(jwks_uri, cache_jwk_set=True, lifespan=3600); app_logger.info(f"Supabase JWKS Client initialized for URL: {jwks_uri}")
         except Exception as e: app_logger.error(f"Failed to initialize Supabase JWK client (RS256): {e}", exc_info=DEBUG_MODE)
     if not SUPABASE_JWT_SECRET and not _supabase_jwk_client: app_logger.warning("Auth: Neither Supabase JWT Secret (HS256) nor Supabase URL (RS256 JWKS) configured.")
     elif SUPABASE_JWT_SECRET: app_logger.info("Supabase JWT Secret (HS256) configured.")
+
     if vertex_ai_configured_successfully and VERTEX_AI_SDK_AVAILABLE and RAG_CORPUS_NAME:
         if not RAG_CORPUS_NAME.startswith("projects/"): app_logger.critical(f"RAG_CORPUS_NAME ('{RAG_CORPUS_NAME}') must be a full resource name. RAG tool NOT created.")
         else:
@@ -339,17 +383,22 @@ async def lifespan(app_instance: FastAPI):
                 rag_retrieval_tool_global = VertexTool.from_retrieval(retrieval=rag_retrieval); app_logger.info(f"RAG Engine tool created for corpus: {RAG_CORPUS_NAME} with top_k={RAG_TOP_K}.")
             except Exception as e: app_logger.error(f"Failed to create RAG Engine tool for '{RAG_CORPUS_NAME}': {e}", exc_info=DEBUG_MODE)
     elif RAG_CORPUS_NAME: app_logger.warning(f"RAG_CORPUS_NAME ('{RAG_CORPUS_NAME}') set, but Vertex AI not configured. RAG tool NOT created.")
+    
     yield
     app_logger.info("Application shutdown.")
 
-app = FastAPI(title="RAG Chat API with Vertex AI RAG Engine", version="2.3.3-prod", lifespan=lifespan, docs_url="/api/docs", redoc_url="/api/redoc", openapi_url="/api/openapi.json")
+app = FastAPI(title="RAG Chat API with Vertex AI RAG Engine", version="2.3.4-json-instr", lifespan=lifespan, docs_url="/api/docs", redoc_url="/api/redoc", openapi_url="/api/openapi.json")
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     app_logger.error(f"Request validation error for {request.url.path}: {exc.errors()}", exc_info=DEBUG_MODE)
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors()), "message": "Invalid input format."})
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
 @app.get("/", tags=["Utility"], include_in_schema=False)
 async def root(): return {"message": f"{app.title} v{app.version} is running."}
+
 @app.get("/health", tags=["Utility"])
 async def health_check():
     auth_ok = bool(_supabase_jwk_client or SUPABASE_JWT_SECRET)
@@ -360,7 +409,10 @@ async def health_check():
             "details": {"gcp_project_id": gcp_project_configured or "N/A", "vertex_sdk_initialized": vertex_ai_configured_successfully,
                         "llm_model": VERTEX_GEMINI_MODEL_NAME if llm_model_operational else "N/A", "llm_operational": llm_model_operational,
                         "rag_tool_configured": bool(RAG_CORPUS_NAME), "rag_tool_active": bool(rag_retrieval_tool_global),
-                        "auth_service_configured": auth_ok, "debug_mode": DEBUG_MODE}}
+                        "auth_service_configured": auth_ok, "debug_mode": DEBUG_MODE,
+                        "system_instruction_source": f"JSON ('{SYSTEM_INSTRUCTION_JSON_PATH}')" if LLM_SYSTEM_INSTRUCTION_FROM_JSON else "None",
+                        "system_instruction_loaded": bool(LLM_SYSTEM_INSTRUCTION_FROM_JSON)                       
+                        }}
 
 @app.get("/api/sessions/", tags=["Session Management"], dependencies=[Depends(rate_limit_dependency)])
 async def list_sessions(current_user: Dict[str, Any] = Depends(get_current_user), offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
@@ -656,7 +708,13 @@ async def chat_endpoint(
     if not DISABLE_SAFETY_SETTINGS_FOR_FINETUNED_MODEL:
         safety_settings_llm = get_vertex_safety_settings()
 
-    system_instruction_llm = LLM_SYSTEM_INSTRUCTION or None
+    # Use system instruction from JSON if available
+    system_instruction_llm = LLM_SYSTEM_INSTRUCTION_FROM_JSON if LLM_SYSTEM_INSTRUCTION_FROM_JSON else None
+    if system_instruction_llm:
+        app_logger.info(f"[SID:{session_id}] Using system instruction loaded from JSON.")
+    else:
+        app_logger.info(f"[SID:{session_id}] No system instruction will be used (either not configured, file error, or empty in JSON).")
+
 
     llm_api_args = {
         "model_name": VERTEX_GEMINI_MODEL_NAME,
@@ -688,6 +746,7 @@ async def chat_endpoint(
         "error_detail": None,
         "llm_prompt_feedback_block_reason": "NONE",
         "llm_finish_reason": "UNKNOWN",
+        "system_instruction_used": bool(system_instruction_llm)
     }
     llm_response_text = "Error: Could not generate an AI response due to an internal issue."
 
